@@ -19,17 +19,23 @@ rcvar=rebound_enable
 
 command="/usr/local/sbin/unbound"
 extra_commands="reload"
-start_precmd="rebound_start_precmd"
+start_precmd="rebound_prestart"
+start_postcmd="rebound_poststart"
+
+# This should be outside of chroot
+rebound_conf="/etc/unbound/unbound.conf"
+
 rebound_mtree=/home/kibab/unbound-rc/REBOUND.chroot.dist
 
 rebound_chrootdir="/var/unbound"
-rebound_confdir="${rebound_chrootdir}/etc/unbound"
-rebound_config="${rebound_chrootdir}/etc/unbound/unbound.conf"
-command_args="-c ${rebound_config}"
+rebound_confdir="${rebound_chrootdir}${rebound_conf%/*}"
+rebound_rootkey="${rebound_chrootdir}/var/db/unbound-root.key"
+command_args="-c ${rebound_conf}"
 
-reload_precmd="/usr/local/sbin/unbound-checkconf ${rebound_config}>/dev/null"
+rebound_checkconf="/usr/local/sbin/unbound-checkconf"
+reload_precmd="$rebound_checkconf ${rebound_chrootdir}${rebound_conf} >/dev/null"
 
-pidfile=${rebound_pidfile:-"${rebound_chrootdir}/var/run/unbound.pid"}
+pidfile=${rebound_pidfile:-"/var/run/unbound.pid"}
 rebound_enable=${rebound_enable:-"NO"}
 
 # If running in a chroot cage, ensure that the appropriate files
@@ -45,7 +51,6 @@ chroot_autoupdate()
 {
 	local file
 
-	echo "chroot_autoupdate()"
 	# Create (or update) the chroot directory structure
 	#
 	if [ -r ${rebound_mtree} ]; then
@@ -101,12 +106,18 @@ chroot_autoupdate()
 	done
 }
 
-rebound_start_precmd()
+rebound_prestart()
 {
 	chroot_autoupdate
 	echo -n "Obtaining a trust anchor:" && \
-	su -m unbound -c "/usr/local/sbin/unbound-anchor -a ${rebound_confdir}/root.key" && \
-	echo .	&& /usr/local/sbin/unbound-checkconf $rebound_config
+	su -m unbound -c "/usr/local/sbin/unbound-anchor -a ${rebound_rootkey}" && \
+	echo .	&& \
+	$rebound_checkconf ${rebound_chrootdir}${rebound_conf} >/dev/null
+}
+
+rebound_poststart()
+{
+    ln -sf "${rebound_chrootdir}/${pidfile}" $pidfile
 }
 
 load_rc_config $name
