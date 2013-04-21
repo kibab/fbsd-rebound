@@ -34,12 +34,34 @@ command_args="-c ${rebound_conf}"
 
 rebound_checkconf="/usr/local/sbin/unbound-checkconf"
 reload_precmd="$rebound_checkconf ${rebound_chrootdir}${rebound_conf} >/dev/null"
+rebound_ctrlsetup="/usr/local/sbin/unbound-control-setup"
 
 pidfile=${rebound_pidfile:-"/var/run/rebound.pid"}
 rebound_enable=${rebound_enable:-"NO"}
 
 rebound_resolvconf_inc="${rebound_chrootdir}/var/rebound-resolvconf.conf"
 
+#Check if nessesary certiicates for remote control exist.
+# If some files don't exist, recreate certificate suite.
+control_setup()
+{
+    local ctrl_files
+    ctrl_files="unbound_control.key unbound_control.pem \
+unbound_server.key unbound_server.pem"
+    regen=0
+    for f in $ctrl_files; do
+	if [ ! -f "$rebound_confdir/$f" ]; then
+	    regen=1
+	fi
+    done
+
+    if [ $regen -eq 1 ]; then
+	for f in $ctrl_files; do
+	    rm -f "$rebound_confdir/$f"
+	done
+	$rebound_ctrlsetup -d "$rebound_confdir"
+    fi
+}
 # If running in a chroot cage, ensure that the appropriate files
 # exist inside the cage, as well as helper symlinks into the cage
 # from outside.
@@ -113,6 +135,7 @@ chroot_autoupdate()
 rebound_prestart()
 {
 	chroot_autoupdate
+	control_setup
 	echo -n "Obtaining a trust anchor:" && \
 	su -m unbound -c "/usr/local/sbin/unbound-anchor -a ${rebound_rootkey}"
 	if [ $? -eq 1 ]; then
