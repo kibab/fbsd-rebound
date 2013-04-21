@@ -23,20 +23,22 @@ start_precmd="rebound_prestart"
 start_postcmd="rebound_poststart"
 
 # This should be outside of chroot
-rebound_conf="/etc/unbound/unbound.conf"
+rebound_conf="/etc/rebound/rebound.conf"
 
-rebound_mtree=/home/kibab/unbound-rc/REBOUND.chroot.dist
+rebound_mtree=./REBOUND.chroot.dist
 
-rebound_chrootdir="/var/unbound"
+rebound_chrootdir="/var/rebound"
 rebound_confdir="${rebound_chrootdir}${rebound_conf%/*}"
-rebound_rootkey="${rebound_chrootdir}/var/db/unbound-root.key"
+rebound_rootkey="${rebound_chrootdir}/var/db/rebound-root.key"
 command_args="-c ${rebound_conf}"
 
 rebound_checkconf="/usr/local/sbin/unbound-checkconf"
 reload_precmd="$rebound_checkconf ${rebound_chrootdir}${rebound_conf} >/dev/null"
 
-pidfile=${rebound_pidfile:-"/var/run/unbound.pid"}
+pidfile=${rebound_pidfile:-"/var/run/rebound.pid"}
 rebound_enable=${rebound_enable:-"NO"}
+
+rebound_resolvconf_inc="${rebound_chrootdir}/var/rebound-resolvconf.conf"
 
 # If running in a chroot cage, ensure that the appropriate files
 # exist inside the cage, as well as helper symlinks into the cage
@@ -73,7 +75,7 @@ chroot_autoupdate()
 		fi
 	else
 		# Make sure it points to the right place.
-		ln -shf ${named_confdir} ${named_conf%/*}
+		ln -shf ${rebound_confdir} ${rebound_conf%/*}
 	fi
 
 	# Mount a devfs in the chroot directory if needed
@@ -104,14 +106,23 @@ chroot_autoupdate()
 			    cp -p /etc/$file "${rebound_chrootdir}/etc/$file"
 		fi
 	done
+
+	touch $rebound_resolvconf_inc
 }
 
 rebound_prestart()
 {
 	chroot_autoupdate
 	echo -n "Obtaining a trust anchor:" && \
-	su -m unbound -c "/usr/local/sbin/unbound-anchor -a ${rebound_rootkey}" && \
-	echo .	&& \
+	su -m unbound -c "/usr/local/sbin/unbound-anchor -a ${rebound_rootkey}"
+	if [ $? -eq 1 ]; then
+	    echo Done.
+	    warn "Updated using the certificate or using builtin anchor!"
+	else
+# XXX negotiate with nlnetlabs about those crazy return codes???
+# See unbound-anchor(8)
+	    echo .
+	fi
 	$rebound_checkconf ${rebound_chrootdir}${rebound_conf} >/dev/null
 }
 
