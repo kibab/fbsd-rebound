@@ -1,0 +1,115 @@
+#!/bin/sh
+#
+# $FreeBSD: dns/unbound/files/unbound.in 303943 2012-09-09 01:08:36Z sem $
+#
+# unbound freebsd startup rc.d script, modified from the named script.
+# uses the default unbound installation path and pidfile location.
+# copy this to /etc/rc.d/unbound
+# and put unbound_enable="YES" into rc.conf
+#
+
+# PROVIDE: rebound
+# REQUIRE: SERVERS cleanvar
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="rebound"
+rcvar=rebound_enable
+
+command="/usr/local/sbin/unbound"
+extra_commands="reload"
+start_precmd="rebound_start_precmd"
+rebound_mtree=/home/kibab/unbound-rc/REBOUND.chroot.dist
+
+rebound_chrootdir="/var/unbound"
+rebound_confdir="${rebound_chrootdir}/etc/unbound"
+rebound_config="${rebound_chrootdir}/etc/unbound/unbound.conf"
+command_args="-c ${rebound_config}"
+
+reload_precmd="/usr/local/sbin/unbound-checkconf ${rebound_config}>/dev/null"
+
+pidfile=${rebound_pidfile:-"${rebound_chrootdir}/var/run/unbound.pid"}
+rebound_enable=${rebound_enable:-"NO"}
+
+# If running in a chroot cage, ensure that the appropriate files
+# exist inside the cage, as well as helper symlinks into the cage
+# from outside.
+#
+# As this is called after the is_running and required_dir checks
+# are made in run_rc_command(), we can safely assume ${named_chrootdir}
+# exists and named isn't running at this point (unless forcestart
+# is used).
+#
+chroot_autoupdate()
+{
+	local file
+
+	echo "chroot_autoupdate()"
+	# Create (or update) the chroot directory structure
+	#
+	if [ -r ${rebound_mtree} ]; then
+		mtree -deU -f ${rebound_mtree} \
+		    -p ${rebound_chrootdir}
+	else
+		warn "/etc/mtree/REBOUND.chroot.dist missing,"
+		warn "chroot directory structure not updated"
+	fi
+
+	# Create (or update) the configuration directory symlink
+	#
+	if [ ! -L "${rebound_conf%/*}" ]; then
+		if [ -d "${rebound_conf%/*}" ]; then
+			warn "rebound chroot: ${rebound_conf%/*} is a directory!"
+		elif [ -e "${rebound_conf%/*}" ]; then
+			warn "rebound chroot: ${rebound_conf%/*} exists!"
+		else
+			ln -s ${rebound_confdir} ${rebound_conf%/*}
+		fi
+	else
+		# Make sure it points to the right place.
+		ln -shf ${named_confdir} ${named_conf%/*}
+	fi
+
+	# Mount a devfs in the chroot directory if needed
+	#
+	if [ `${SYSCTL_N} security.jail.jailed` -eq 0 ]; then
+		umount ${rebound_chrootdir}/dev 2>/dev/null
+		devfs_domount ${rebound_chrootdir}/dev devfsrules_hide_all
+		devfs -m ${rebound_chrootdir}/dev rule apply path null unhide
+		devfs -m ${rebound_chrootdir}/dev rule apply path random unhide
+	else
+		if [ -c ${rebound_chrootdir}/dev/null -a \
+		    -c ${rebound_chrootdir}/dev/random ]; then
+			info "rebound chroot: using pre-mounted devfs."
+		else
+			err 1 "rebound chroot: devfs cannot be mounted from" \
+			    "within a jail. Thus a chrooted rebound cannot" \
+			    "be run from within a jail." \
+			    "To run rebound without chrooting it, set" \
+			    "rebound_chrootdir=\"\" in /etc/rc.conf."
+		fi
+	fi
+
+	# Copy and/or update key files to the chroot /etc
+	#
+	for file in localtime protocols services; do
+		if [ -r /etc/$file ]; then
+			cmp -s /etc/$file "${rebound_chrootdir}/etc/$file" ||
+			    cp -p /etc/$file "${rebound_chrootdir}/etc/$file"
+		fi
+	done
+}
+
+rebound_start_precmd()
+{
+	chroot_autoupdate
+	echo -n "Obtaining a trust anchor:" && \
+	su -m unbound -c "/usr/local/sbin/unbound-anchor -a ${rebound_confdir}/root.key" && \
+	echo .	&& /usr/local/sbin/unbound-checkconf $rebound_config
+}
+
+load_rc_config $name
+
+required_dirs="${rebound_chrootdir}"
+run_rc_command "$1"
